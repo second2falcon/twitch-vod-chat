@@ -77,6 +77,6 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-@import "../style/animations";
-@import "../style/comments";
+@use "../style/animations";
+@use "../style/comments";
 </style>

@@ -39,7 +39,7 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-@import "../style/animations";
+@use "../style/animations";
 
 .comment {
     // min-height: 20px;

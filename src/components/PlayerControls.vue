@@ -407,6 +407,7 @@ export default defineComponent({
 
 
 <style lang="scss" scoped>
+@use "../style/input";
 
 #controls {
 	// width: $width;
@@ -508,9 +509,5 @@ i.icon {
     border-radius: 100%;
     cursor: help;
 }
-
-
-
-@import "../style/input";
 
 </style>

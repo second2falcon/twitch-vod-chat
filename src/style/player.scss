@@ -7,9 +7,9 @@ $center: true;
 
 @import "@fontsource/inter";
 
-@import "animations";
-@import "comments";
-@import "input";
+@use "animations";
+@use "comments";
+@use "input";
 
 #playback_info {
 	overflow: hidden;

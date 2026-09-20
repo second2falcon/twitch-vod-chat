@@ -1,3 +1,5 @@
+@use 'sass:color';
+
 input,
 select {
 
@@ -79,7 +81,7 @@ select {
 		background: #1d912d;
 
 		&:hover {
-			background-color: lighten(#1d912d, 5%);
+			background-color: color.adjust(#1d912d, $lightness: 5%);
 		}
 	}
 

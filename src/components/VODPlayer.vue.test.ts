@@ -124,7 +124,7 @@ describe('VODPlayer', () => {
 
         const emote = wrapper.findComponent(ChatEmote);
         expect(emote.exists()).toBe(true);
-        expect(emote.props().emote.name).toBe('LUL');
+        expect(emote.props().emote?.name).toBe('LUL');
 
     })
 
