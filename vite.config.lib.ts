@@ -27,6 +27,7 @@ export default defineConfig({
             name: 'twitch-vod-chat',
             fileName: 'twitch-vod-chat',
             formats: ['es', 'cjs'],
+            cssFileName: 'style',
         },
         rollupOptions: {
             external: ['vue'],
@@ -37,6 +38,5 @@ export default defineConfig({
             },
         },
         outDir: 'dist-lib',
-        cssFileName: 'style',
     },
 })
