@@ -239,6 +239,10 @@
                         </tr>
                     </table>
                     <label><input type="range" min="10" max="42" v-model="store.settings.fontSize" /> Font size ({{ store.settings.fontSize }}px)</label>
+                    <br />
+                    <label
+                        title="When seeking or resuming, show this many messages from before the playback position right away"
+                    ><input type="number" min="0" :max="vodplayer.commentLimit" step="1" v-model.number="store.settings.chatBackfillCount" /> Messages shown after seek</label>
                 </div>
             </div>
         </div>

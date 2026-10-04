@@ -35,6 +35,7 @@ const defaultSettings: VODPlayerSettings = {
     chatTransition: true,
     chatPositionX: 0,
     chatPositionY: 0,
+    chatBackfillCount: 20,
 };
 
 /*

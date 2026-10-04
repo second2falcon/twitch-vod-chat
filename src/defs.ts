@@ -321,6 +321,10 @@ export interface VODPlayerSettings {
     chatTransition: boolean;
     chatPositionX: number;
     chatPositionY: number;
+    /**
+     * How many messages before the playback position to show after a seek/resume
+     */
+    chatBackfillCount: number;
 }
 
 export type VideoSource = "file" | "file_http" | "twitch" | "youtube";
