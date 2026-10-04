@@ -149,6 +149,22 @@ describe('VODPlayer chat sync', () => {
         expect(queueIds()).toEqual([]);
     });
 
+    it('detects seeks the player did not report', async () => {
+        videoTime = 100;
+        await vm.resetChat();
+        await playFor(1);
+
+        videoTime = 1000; // jump without a seeked event (e.g. YouTube)
+        vi.setSystemTime(Date.now() + 100);
+        await vm.tick();
+        expect(queueIds()).toEqual(idsUpTo(1000, 20));
+
+        videoTime = 200; // and backwards
+        vi.setSystemTime(Date.now() + 100);
+        await vm.tick();
+        expect(queueIds()).toEqual(idsUpTo(200, 20));
+    });
+
     it.each([
         ['number', 300],
         ['string from a text input', '300'],

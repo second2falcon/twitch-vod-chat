@@ -169,6 +169,7 @@ export default defineComponent({
          * Chat time of the previous tick, null forces a resync (with backfill) on the next tick
          */
         lastTickChatTime: number | null;
+        lastTickWallTime: number;
 
         /**
          * Seek target from the url (t=) to apply when the video is ready
@@ -251,6 +252,7 @@ export default defineComponent({
             nextCommentIndex: 0,
 
             lastTickChatTime: null,
+            lastTickWallTime: 0,
 
             pendingStartTime: null,
             videoReady: false,
@@ -995,6 +997,8 @@ export default defineComponent({
         },
 
         startTicker() {
+            // time spent paused doesn't count towards the jump detection in advanceChat
+            this.lastTickWallTime = Date.now();
             this.interval = window.setInterval(this.tick.bind(this), this.tickDelay);
         },
 
@@ -1359,16 +1363,26 @@ export default defineComponent({
 
         /**
          * Add every comment up to chat time (video time + offset) `chatTime` to the queue.
-         * On the first tick after starting playback or loading a chat log, resync with backfill first.
+         * If chat time jumped since the last tick (a seek the player didn't report, an offset change, first tick),
+         * resync with backfill instead of dumping or dropping everything in between.
          */
         advanceChat(chatTime: number): void {
             const localChatLog = this.getChatLog();
             if (!localChatLog) return;
 
+            const now = Date.now();
             if (this.lastTickChatTime === null) {
                 this.syncChatToTime(chatTime);
+            } else {
+                const delta = chatTime - this.lastTickChatTime;
+                const elapsed = (now - this.lastTickWallTime) / 1000;
+                if (delta < -1 || delta > elapsed + 5) {
+                    console.debug(`Chat time jumped ${delta.toFixed(2)}s in ${elapsed.toFixed(2)}s, resyncing`);
+                    this.syncChatToTime(chatTime);
+                }
             }
             this.lastTickChatTime = chatTime;
+            this.lastTickWallTime = now;
 
             /**
              * Comments are sorted, so walk forward from the first unprocessed one until one is in the future
@@ -1409,6 +1423,7 @@ export default defineComponent({
             this.shownComments = 0;
             this.nextCommentIndex = 0;
             this.lastTickChatTime = chatTime;
+            this.lastTickWallTime = Date.now();
 
             const localChatLog = this.getChatLog();
             if (!localChatLog) return;
