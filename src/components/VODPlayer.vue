@@ -1173,11 +1173,12 @@ export default defineComponent({
                 return false;
             }
 
+            /**
+             * A long gap in chat is legitimate (quiet chat, stream offline/ad break during a live capture), so only warn.
+             * This used to pause + alert, which mostly fired when a broken offset made the tick loop dump the whole file.
+             */
             if (!backfill && localChatLog.comments[commentIndex + 1] && localChatLog.comments[commentIndex + 1].content_offset_seconds > comment.content_offset_seconds + 600) {
-                this.pause();
-                console.error("Next comment is over 10 minutes in the future, something is probably wrong with the file.");
-                alert("Next comment is over 10 minutes in the future, something is probably wrong with the file.");
-                return false;
+                console.warn(`Next comment after #${commentIndex} (${comment.content_offset_seconds}s) is over 10 minutes in the future.`);
             }
 
             // console.debug(`Handle comment #${commentIndex}: ${comment.message.body} @ ${comment.content_offset_seconds} (${comment.message.fragments.length} fragments: ${comment.message.fragments.map(

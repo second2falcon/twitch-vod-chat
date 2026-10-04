@@ -206,6 +206,15 @@ describe('VODPlayer chat sync', () => {
         await vi.waitFor(() => expect(queueIds()).toEqual(idsUpTo(900, 20)));
     });
 
+    it('no longer pauses or alerts on a long gap in chat', async () => {
+        const pauseSpy = vi.spyOn(vm, 'pause');
+        videoTime = 1495;
+        await vm.resetChat();
+        await playFor(10);
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(pauseSpy).not.toHaveBeenCalled();
+    });
+
     it('renders emotes and badges for backfilled comments', async () => {
         vm.badges.global = { subscriber: { imageURL: 'https://example.com/sub.png' } };
         comments.length = 0;
