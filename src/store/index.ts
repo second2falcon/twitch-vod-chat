@@ -129,7 +129,8 @@ export const store = reactive<StoreType>({
     loadSettings() {
         const v = localStorage.getItem("settings");
         if (v) {
-            this.settings = JSON.parse(v);
+            // merge so settings added after the save get their defaults
+            this.settings = { ...defaultSettings, ...JSON.parse(v) };
             console.debug("Loaded settings");
         } else {
             console.debug("No settings to load");
