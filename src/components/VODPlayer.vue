@@ -170,6 +170,12 @@ export default defineComponent({
          */
         lastTickChatTime: number | null;
 
+        /**
+         * Seek target from the url (t=) to apply when the video is ready
+         */
+        pendingStartTime: number | null;
+        videoReady: boolean;
+
         minimal_show: boolean;
 
         demo: boolean;
@@ -245,6 +251,9 @@ export default defineComponent({
             nextCommentIndex: 0,
 
             lastTickChatTime: null,
+
+            pendingStartTime: null,
+            videoReady: false,
 
             minimal_show: false,
 
@@ -1024,8 +1033,27 @@ export default defineComponent({
         },
 
         async onReady(event: any): Promise<void> {
+            this.videoReady = true;
             this.$emit('ready');
-            this.loadPlaybackPosition();
+            if (this.pendingStartTime !== null) {
+                const startTime = this.pendingStartTime;
+                this.pendingStartTime = null;
+                await this.seek(startTime);
+            } else {
+                this.loadPlaybackPosition();
+            }
+        },
+
+        /**
+         * Seek to this position once the video is ready (t= url parameter), overrides the saved playback position
+         */
+        async setStartTime(seconds: number): Promise<void> {
+            if (!Number.isFinite(seconds) || seconds < 0) return;
+            if (this.videoReady && this.embedPlayer) {
+                await this.seek(seconds);
+            } else {
+                this.pendingStartTime = seconds;
+            }
         },
 
         /**
