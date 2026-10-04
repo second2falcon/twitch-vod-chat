@@ -46,7 +46,7 @@ import { defineComponent, nextTick, ref } from "vue";
 import ChatMessage from "@/components/ChatMessage.vue";
 import VideoControls from "@/components/VideoControls.vue";
 import { store } from "@/store";
-import { ChatSource, GqlGlobalBadgeResponse, GqlSubBadgeResponse, TwitchChatBadge, TwitchComment, TwitchCommentDump, TwitchCommentDumpTD, TwitchCommentProxy, TwitchUserBadgeProxy, VideoChapter, VideoSource } from "@/defs";
+import { ChatSource, GqlGlobalBadgeResponse, GqlSubBadgeResponse, TwitchChatBadge, TwitchComment, TwitchCommentTD, TwitchCommentDump, TwitchCommentDumpTD, TwitchCommentProxy, TwitchUserBadgeProxy, VideoChapter, VideoSource } from "@/defs";
 import BaseEmoteProvider from "@/emoteproviders/base";
 import BTTVChannelEmoteProvider from "@/emoteproviders/bttv_channel";
 import BTTVGlobalEmoteProvider from "@/emoteproviders/bttv_global";
@@ -56,6 +56,7 @@ import VideoPlayerHTML5 from "./players/VideoPlayerHTML5.vue";
 import VideoPlayerTwitch from "./players/VideoPlayerTwitch.vue";
 import VideoPlayerYouTube from "./players/VideoPlayerYouTube.vue";
 import ChatBox from "./ChatBox.vue";
+import { findFirstCommentAfter, sortCommentsByOffset, toFiniteNumber } from "@/helpers";
 
 let chatLog: TwitchCommentDump | TwitchCommentDumpTD | undefined; // decouple from vue for performance
 
@@ -93,7 +94,10 @@ export default defineComponent({
         videoDuration: number;
         videoChapters: VideoChapter[];
         chatLoaded: boolean;
-        chatOffset: number;
+        /**
+         * Seconds added to the video time to get the chat time. Bound to form inputs, so read it through getChatOffset()
+         */
+        chatOffset: number | string;
         vodLength?: number;
         playback_text: string; // TODO: remove
         commentQueue: TwitchCommentProxy[];
@@ -155,6 +159,23 @@ export default defineComponent({
         previousTick: number;
 
         shownComments: number;
+
+        /**
+         * Index into the (sorted) chat log of the first comment that hasn't been processed yet
+         */
+        nextCommentIndex: number;
+
+        /**
+         * Chat time of the previous tick, null forces a resync (with backfill) on the next tick
+         */
+        lastTickChatTime: number | null;
+        lastTickWallTime: number;
+
+        /**
+         * Seek target from the url (t=) to apply when the video is ready
+         */
+        pendingStartTime: number | null;
+        videoReady: boolean;
 
         minimal_show: boolean;
 
@@ -227,6 +248,14 @@ export default defineComponent({
             previousTick: 0,
 
             shownComments: 0,
+
+            nextCommentIndex: 0,
+
+            lastTickChatTime: null,
+            lastTickWallTime: 0,
+
+            pendingStartTime: null,
+            videoReady: false,
 
             minimal_show: false,
 
@@ -318,6 +347,8 @@ export default defineComponent({
             this.channelName = "";
 
             this.shownComments = 0;
+            this.nextCommentIndex = 0;
+            this.lastTickChatTime = null;
 
             // this.playerDemo();
 
@@ -576,12 +607,21 @@ export default defineComponent({
                 console.warn("loadChatFileFromURL: comments have no id");
             }
 
+            // the tick loop and seek backfill walk the comments by index and binary search them, so they must be in time order
+            if (sortCommentsByOffset(json.comments)) {
+                console.warn("loadChatFileFromURL: comments were not in time order, sorted them");
+            }
+
             chatLog = json;
 
             console.debug("Chat JSON stored in memory", chatLog);
 
-            this.commentAmount = Object.values(chatLog.comments).length; // speed?
+            this.commentAmount = chatLog.comments.length;
             console.debug(`Comment amount: ${this.commentAmount}`);
+
+            // new chat log, resync to the current position on the next tick
+            this.nextCommentIndex = 0;
+            this.lastTickChatTime = null;
 
             /*
             // get duration, this changed in the new api. if you know of a better parsing solution, please fix this
@@ -928,6 +968,9 @@ export default defineComponent({
             // clear comment queue, this will be populated and cleaned over time
             this.commentQueue = [];
 
+            // first tick syncs to wherever the video is (resume position, t= or 0) and backfills chat
+            this.lastTickChatTime = null;
+
             this.timeStart = Date.now();
 
             // this.embedPlayer.seek(0);
@@ -945,9 +988,6 @@ export default defineComponent({
                 // this.fetchChat();
             }
 
-            // offset
-            this.timeStart += this.chatOffset;
-
             this.play();
 
             // FIXME: vue
@@ -962,6 +1002,8 @@ export default defineComponent({
         },
 
         startTicker() {
+            // time spent paused doesn't count towards the jump detection in advanceChat
+            this.lastTickWallTime = Date.now();
             this.interval = window.setInterval(this.tick.bind(this), this.tickDelay);
         },
 
@@ -1000,8 +1042,38 @@ export default defineComponent({
         },
 
         async onReady(event: any): Promise<void> {
+            this.videoReady = true;
             this.$emit('ready');
-            this.loadPlaybackPosition();
+            if (this.pendingStartTime !== null) {
+                const startTime = this.pendingStartTime;
+                this.pendingStartTime = null;
+                await this.seek(startTime);
+            } else {
+                this.loadPlaybackPosition();
+            }
+        },
+
+        /**
+         * Seek to this position once the video is ready (t= url parameter), overrides the saved playback position
+         */
+        async setStartTime(seconds: number): Promise<void> {
+            if (!Number.isFinite(seconds) || seconds < 0) return;
+            if (this.videoReady && this.embedPlayer) {
+                await this.seek(seconds);
+            } else {
+                this.pendingStartTime = seconds;
+            }
+        },
+
+        /**
+         * Chat offset as a number, whatever the form inputs have put in chatOffset
+         */
+        getChatOffset(): number {
+            return toFiniteNumber(this.chatOffset);
+        },
+
+        adjustChatOffset(deltaSeconds: number): void {
+            this.chatOffset = Math.round((this.getChatOffset() + toFiniteNumber(deltaSeconds)) * 1000) / 1000;
         },
 
         async togglePause(): Promise<void> {
@@ -1030,7 +1102,11 @@ export default defineComponent({
             return chatLog; // mockable
         },
 
-        handleComment(commentIndex: number, offsetTime: number): boolean {
+        /**
+         * Render a comment into the queue if it should be shown at chat time `offsetTime`
+         * @param backfill comment is part of the history shown after a seek, skip the age check
+         */
+        handleComment(commentIndex: number, offsetTime: number, backfill = false): boolean {
 
             const localChatLog = this.getChatLog();
 
@@ -1087,20 +1163,22 @@ export default defineComponent({
 
             /**
              * If comment is older than 60 seconds, mark it as displayed in a last ditch effort.
+             * Backfilled comments are old on purpose.
              */
             const commentAge = offsetTime - comment.content_offset_seconds;
-            if (commentAge > 60 && !this.viewedComments[comment._id]) {
+            if (!backfill && commentAge > 60 && !this.viewedComments[comment._id]) {
                 // console.debug(`skip comment ${commentIndex}, too old`);
                 // comment.displayed = true;
                 this.viewedComments[comment._id] = true;
                 return false;
             }
 
-            if (localChatLog.comments[commentIndex + 1] && localChatLog.comments[commentIndex + 1].content_offset_seconds > comment.content_offset_seconds + 600) {
-                this.pause();
-                console.error("Next comment is over 10 minutes in the future, something is probably wrong with the file.");
-                alert("Next comment is over 10 minutes in the future, something is probably wrong with the file.");
-                return false;
+            /**
+             * A long gap in chat is legitimate (quiet chat, stream offline/ad break during a live capture), so only warn.
+             * This used to pause + alert, which mostly fired when a broken offset made the tick loop dump the whole file.
+             */
+            if (!backfill && localChatLog.comments[commentIndex + 1] && localChatLog.comments[commentIndex + 1].content_offset_seconds > comment.content_offset_seconds + 600) {
+                console.warn(`Next comment after #${commentIndex} (${comment.content_offset_seconds}s) is over 10 minutes in the future.`);
             }
 
             // console.debug(`Handle comment #${commentIndex}: ${comment.message.body} @ ${comment.content_offset_seconds} (${comment.message.fragments.length} fragments: ${comment.message.fragments.map(
@@ -1235,7 +1313,7 @@ export default defineComponent({
                 throw new Error("No embed player in tick");
             }
 
-            if (!chatLog) {
+            if (!this.getChatLog()) {
                 throw new Error("No chat log in tick");
             }
 
@@ -1246,7 +1324,6 @@ export default defineComponent({
              * Use current time of active playing video
              */
             const videoTime = await this.embedPlayer.getCurrentTime();
-            const offsetTime = (videoTime ?? 0) + this.chatOffset;
 
             if (videoTime === undefined) {
                 return false;
@@ -1273,58 +1350,131 @@ export default defineComponent({
                 console.debug(`More comments than shown (${this.shownComments}/${this.commentAmount})`);
             }
 
+            // synchronous from here until the queue is updated, so overlapping ticks can't interleave
+            this.advanceChat(videoTime + this.getChatOffset());
+
+            this.scrollChatToBottom();
+
             if (videoTime > this.lastSavedPlaybackPosition + 15) {
                 await this.savePlaybackPosition();
                 this.lastSavedPlaybackPosition = videoTime;
             }
 
+            // console.debug("Tick finished", Date.now() - tickStart, "Previous tick", Date.now() - this.previousTick);
+
+            // this.previousTick = Date.now();
+
+            return true;
+        },
+
+        /**
+         * Add every comment up to chat time (video time + offset) `chatTime` to the queue.
+         * If chat time jumped since the last tick (a seek the player didn't report, an offset change, first tick),
+         * resync with backfill instead of dumping or dropping everything in between.
+         */
+        advanceChat(chatTime: number): void {
+            const localChatLog = this.getChatLog();
+            if (!localChatLog) return;
+
+            const now = Date.now();
+            if (this.lastTickChatTime === null) {
+                this.syncChatToTime(chatTime);
+            } else {
+                const delta = chatTime - this.lastTickChatTime;
+                const elapsed = (now - this.lastTickWallTime) / 1000;
+                if (delta < -1 || delta > elapsed + 5) {
+                    console.debug(`Chat time jumped ${delta.toFixed(2)}s in ${elapsed.toFixed(2)}s, resyncing`);
+                    this.syncChatToTime(chatTime);
+                }
+            }
+            this.lastTickChatTime = chatTime;
+            this.lastTickWallTime = now;
+
             /**
-             * Loop through all comments to insert into queue
+             * Comments are sorted, so walk forward from the first unprocessed one until one is in the future
              */
-            for (let i = this.shownComments; i < this.commentAmount; i++) {
+            const comments = localChatLog.comments;
+            for (let i = this.nextCommentIndex; i < comments.length; i++) {
 
                 if (this.malformed_comments > 100) {
                     this.pause();
                     alert("Too many malformed comments, something is wrong with the chat log.");
-                    return false;
+                    return;
                 }
 
-                const comment = chatLog.comments[i];
-
-                // quick check if comment is too far away
-                if (comment.content_offset_seconds > offsetTime + 30) {
+                if (comments[i].content_offset_seconds > chatTime) {
                     break;
                 }
+
+                this.nextCommentIndex = i + 1;
 
                 try {
-                    this.handleComment(i, offsetTime);
+                    this.handleComment(i, chatTime);
                 } catch (error) {
                     console.error("Error handling comment", error);
-                    break;
                 }
 
             }
 
-            /**
-             * Remove old comments from the queue to not waste drawing
-             */
-            if (this.commentQueue.length >= this.commentLimit) {
-                this.commentQueue.splice(0, this.commentQueue.length - this.commentLimit);
-                // console.debug( 'Comments overflowing, delete', this.commentQueue.length, this.commentQueue.length - this.commentLimit );
+            this.trimCommentQueue();
+        },
+
+        /**
+         * Restart chat at chat time `chatTime`: clear the queue, show the last few comments at or before it
+         * (chatBackfillCount setting), and continue normal playback from the first comment after it.
+         */
+        syncChatToTime(chatTime: number): void {
+            this.commentQueue = [];
+            this.viewedComments = {};
+            this.shownComments = 0;
+            this.nextCommentIndex = 0;
+            this.lastTickChatTime = chatTime;
+            this.lastTickWallTime = Date.now();
+
+            const localChatLog = this.getChatLog();
+            if (!localChatLog) return;
+            const comments = localChatLog.comments;
+
+            const firstAfter = findFirstCommentAfter(comments, chatTime);
+            this.nextCommentIndex = firstAfter;
+
+            const backfillCount = Math.min(this.commentLimit, Math.max(0, Math.floor(toFiniteNumber(this.store.settings.chatBackfillCount ?? 20))));
+            const backfill: number[] = [];
+            for (let i = firstAfter - 1; i >= 0 && backfill.length < backfillCount; i--) {
+                if (this.isCommentShowable(comments[i])) backfill.push(i);
             }
 
-            // if (Object.keys(this.viewedComments).length > this.commentLimit * 10) {
-            //     this.viewedComments = {};
-            // }
+            // oldest first, all at once
+            for (let j = backfill.length - 1; j >= 0; j--) {
+                try {
+                    this.handleComment(backfill[j], chatTime, true);
+                } catch (error) {
+                    console.error("Error handling backfill comment", error);
+                }
+            }
 
-            /**
-             * Scroll to bottom of chat window
-             * @todo: check why this doesn't work anymore
-             */
-            // const commentsDiv = this.$refs.comments as HTMLElement;
-            // if (commentsDiv) {
-            //     commentsDiv.scrollTop = commentsDiv.scrollHeight;
-            // }
+            console.debug(`Synced chat to ${chatTime}s: next comment #${firstAfter}, backfilled ${backfill.length}`);
+        },
+
+        /**
+         * Filters that hide a comment regardless of time, so backfill can pick exactly the comments that will render
+         */
+        isCommentShowable(comment: TwitchComment | TwitchCommentTD): boolean {
+            if (comment.content_offset_seconds === undefined || comment.content_offset_seconds < 0) return false;
+            if (this.store.settings.showVODComments && "source" in comment && comment.source == "comment") return false;
+            return true;
+        },
+
+        /**
+         * Remove old comments from the queue to not waste drawing
+         */
+        trimCommentQueue(): void {
+            if (this.commentQueue.length > this.commentLimit) {
+                this.commentQueue.splice(0, this.commentQueue.length - this.commentLimit);
+            }
+        },
+
+        scrollChatToBottom(): void {
             if (this.chatbox) {
                 nextTick(() => {
                     if (this.chatbox) {
@@ -1334,16 +1484,6 @@ export default defineComponent({
                     }
                 });
             }
-
-            // console.debug("Tick finished", Date.now() - tickStart, "Previous tick", Date.now() - this.previousTick);
-
-            // this.previousTick = Date.now();
-
-            // window.requestAnimationFrame(this.tick.bind(this));
-
-            // this.shownComments++;
-
-            return true;
         },
 
         fullscreen() {
@@ -1369,54 +1509,20 @@ export default defineComponent({
             return `#${q.toString()}`;
         },
 
+        /**
+         * Re-place chat at the current video position + chat offset (seek, offset change, reset button)
+         */
         async resetChat(): Promise<void> {
-            if (!chatLog) return;
+            if (!this.getChatLog()) return;
             if (!this.embedPlayer) return;
-            console.debug("Reset chat");
-
-            // if (this.elements.comments) this.elements.comments.innerHTML = "";
-
-            this.stopTicker();
-
-            console.debug(`Resetting queue, still ${this.commentQueue.length} comments.`);
-            this.commentQueue = [];
-
-            console.debug(`Resetting viewed comments, ${this.shownComments} comments.`);
-            this.viewedComments = {};
-            this.shownComments = 0;
 
             const currentTime = await this.embedPlayer.getCurrentTime();
-            if (!currentTime) return;
+            if (currentTime === undefined) return;
 
-            console.debug(`Resetting chat, current time: ${currentTime}`);
-            /*
-            for (let i = 0; i < this.commentAmount; i++) {
-                if (chatLog.comments[i].content_offset_seconds < currentTime) continue;
-                this.shownComments = i;
-                break;
-                // this.viewedComments[comment._id] = true;
-            }
-            */
-            const lastComment = chatLog.comments.findIndex((c) => c.content_offset_seconds >= currentTime);
-            if (lastComment > 0) {
-                this.shownComments = lastComment;
-            }
-
-            console.debug(`At ${currentTime} seconds, ${this.shownComments} comments viewed.`);
-
-            this.startTicker();
-
-            /*
-            if (this.commentAmount) {
-                console.debug(`Reset ${this.commentAmount} comments`);
-                for (let i = 0; i < this.commentAmount; i++) {
-                    const comment = chatLog.comments[i];
-                    comment.displayed = false;
-                }
-            } else {
-                console.debug(`No comment queue`);
-            }
-            */
+            const chatTime = currentTime + this.getChatOffset();
+            console.debug(`Reset chat, video time: ${currentTime}, chat time: ${chatTime}`);
+            this.syncChatToTime(chatTime);
+            this.scrollChatToBottom();
         },
 
         async savePlaybackPosition(): Promise<void> {
@@ -1528,6 +1634,10 @@ export default defineComponent({
         VideoPlayerYouTube
     },
     watch: {
+        chatOffset() {
+            // move chat to the new offset right away, also while paused
+            if (this.isReady) this.resetChat();
+        },
         chat_source() {
             console.log("chat_source on vodplayer changed", this.chat_source);
         },

@@ -66,8 +66,9 @@
                     &nbsp;
                     <input
                         name="chatOffset"
-                        v-model="vodplayer.chatOffset"
+                        v-model.number="vodplayer.chatOffset"
                         type="number"
+                        step="any"
                         :disabled="!vodplayer.chatLoaded"
                     />
                     &nbsp;
@@ -129,7 +130,7 @@
             <div class="option-group">
                 <div class="option-title">Chat offset in seconds</div>
                 <div class="option-content">
-                    <input name="chatOffset" v-model="vodplayer.chatOffset" />
+                    <input name="chatOffset" v-model.number="vodplayer.chatOffset" type="number" step="any" />
                 </div>
             </div>
 
@@ -238,6 +239,10 @@
                         </tr>
                     </table>
                     <label><input type="range" min="10" max="42" v-model="store.settings.fontSize" /> Font size ({{ store.settings.fontSize }}px)</label>
+                    <br />
+                    <label
+                        title="When seeking or resuming, show this many messages from before the playback position right away"
+                    ><input type="number" min="0" :max="vodplayer.commentLimit" step="1" v-model.number="store.settings.chatBackfillCount" /> Messages shown after seek</label>
                 </div>
             </div>
         </div>
@@ -387,9 +392,10 @@ export default defineComponent({
             if (this.syncStep) {
                 if (this.syncStart) {
                     const diff = new Date().getTime() - this.syncStart.getTime();
-                    this.vodplayer.chatOffset += diff / 1000;
+                    // chat reacted diff seconds late, so show it diff seconds earlier (positive offset)
+                    this.vodplayer.adjustChatOffset(diff / 1000);
                     this.syncStep = false;
-                    alert(`Chat offset set to ${this.vodplayer.chatOffset}`);
+                    alert(`Chat offset set to ${this.vodplayer.getChatOffset()}`);
                 }
             } else {
                 this.syncStart = new Date();

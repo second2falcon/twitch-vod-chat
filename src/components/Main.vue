@@ -94,8 +94,16 @@ export default defineComponent({
                 this.store.settings.twitchToken = params.tk;
             }
 
+            // chat offset in seconds (chat time = video time + offset)
             if (params.offset) {
-                vodplayer.chatOffset = parseInt(params.offset);
+                const offset = parseFloat(params.offset);
+                if (Number.isFinite(offset)) vodplayer.chatOffset = offset;
+            }
+
+            // start position, seconds ("3600", "3600.5") or twitch style ("1h2m3s")
+            if (params.t) {
+                const t = /^[0-9.]+$/.test(params.t) ? parseFloat(params.t) : vodplayer.parseTwitchDuration(params.t);
+                if (t !== undefined) vodplayer.setStartTime(t);
             }
 
             this.store.minimal = params.minimal !== undefined && parseInt(params.minimal) > 0;
