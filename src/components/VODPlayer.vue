@@ -56,6 +56,7 @@ import VideoPlayerHTML5 from "./players/VideoPlayerHTML5.vue";
 import VideoPlayerTwitch from "./players/VideoPlayerTwitch.vue";
 import VideoPlayerYouTube from "./players/VideoPlayerYouTube.vue";
 import ChatBox from "./ChatBox.vue";
+import { toFiniteNumber } from "@/helpers";
 
 let chatLog: TwitchCommentDump | TwitchCommentDumpTD | undefined; // decouple from vue for performance
 
@@ -93,7 +94,10 @@ export default defineComponent({
         videoDuration: number;
         videoChapters: VideoChapter[];
         chatLoaded: boolean;
-        chatOffset: number;
+        /**
+         * Seconds added to the video time to get the chat time. Bound to form inputs, so read it through getChatOffset()
+         */
+        chatOffset: number | string;
         vodLength?: number;
         playback_text: string; // TODO: remove
         commentQueue: TwitchCommentProxy[];
@@ -945,9 +949,6 @@ export default defineComponent({
                 // this.fetchChat();
             }
 
-            // offset
-            this.timeStart += this.chatOffset;
-
             this.play();
 
             // FIXME: vue
@@ -1002,6 +1003,17 @@ export default defineComponent({
         async onReady(event: any): Promise<void> {
             this.$emit('ready');
             this.loadPlaybackPosition();
+        },
+
+        /**
+         * Chat offset as a number, whatever the form inputs have put in chatOffset
+         */
+        getChatOffset(): number {
+            return toFiniteNumber(this.chatOffset);
+        },
+
+        adjustChatOffset(deltaSeconds: number): void {
+            this.chatOffset = Math.round((this.getChatOffset() + toFiniteNumber(deltaSeconds)) * 1000) / 1000;
         },
 
         async togglePause(): Promise<void> {
@@ -1246,7 +1258,7 @@ export default defineComponent({
              * Use current time of active playing video
              */
             const videoTime = await this.embedPlayer.getCurrentTime();
-            const offsetTime = (videoTime ?? 0) + this.chatOffset;
+            const offsetTime = (videoTime ?? 0) + this.getChatOffset();
 
             if (videoTime === undefined) {
                 return false;
