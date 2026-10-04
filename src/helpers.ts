@@ -21,6 +21,24 @@ function commentSortKey(comment: { content_offset_seconds?: number }): number {
 }
 
 /**
+ * Make sure comments are in ascending content_offset_seconds order, live chat dumps are written in arrival order.
+ * Stable, so comments with equal offsets keep their original order. Sorts in place.
+ * @returns true if the array had to be sorted
+ */
+export function sortCommentsByOffset(comments: { content_offset_seconds?: number }[]): boolean {
+    let sorted = true;
+    for (let i = 1; i < comments.length; i++) {
+        if (commentSortKey(comments[i]) < commentSortKey(comments[i - 1])) {
+            sorted = false;
+            break;
+        }
+    }
+    if (sorted) return false;
+    comments.sort((a, b) => commentSortKey(a) - commentSortKey(b));
+    return true;
+}
+
+/**
  * Binary search for the index of the first comment with content_offset_seconds > time.
  * Everything before the returned index is at or before `time`. Comments must be sorted (see sortCommentsByOffset).
  */

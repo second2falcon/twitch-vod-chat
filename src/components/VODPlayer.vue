@@ -56,7 +56,7 @@ import VideoPlayerHTML5 from "./players/VideoPlayerHTML5.vue";
 import VideoPlayerTwitch from "./players/VideoPlayerTwitch.vue";
 import VideoPlayerYouTube from "./players/VideoPlayerYouTube.vue";
 import ChatBox from "./ChatBox.vue";
-import { findFirstCommentAfter, toFiniteNumber } from "@/helpers";
+import { findFirstCommentAfter, sortCommentsByOffset, toFiniteNumber } from "@/helpers";
 
 let chatLog: TwitchCommentDump | TwitchCommentDumpTD | undefined; // decouple from vue for performance
 
@@ -605,6 +605,11 @@ export default defineComponent({
             });
             if (tmp_id > 1) {
                 console.warn("loadChatFileFromURL: comments have no id");
+            }
+
+            // the tick loop and seek backfill walk the comments by index and binary search them, so they must be in time order
+            if (sortCommentsByOffset(json.comments)) {
+                console.warn("loadChatFileFromURL: comments were not in time order, sorted them");
             }
 
             chatLog = json;

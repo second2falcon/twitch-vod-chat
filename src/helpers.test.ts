@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findFirstCommentAfter, toFiniteNumber } from '@/helpers';
+import { findFirstCommentAfter, sortCommentsByOffset, toFiniteNumber } from '@/helpers';
 
 const c = (t?: number) => ({ content_offset_seconds: t });
 
@@ -30,6 +30,27 @@ describe('findFirstCommentAfter', () => {
             const linear = comments.findIndex((x) => (x.content_offset_seconds as number) > time);
             expect(findFirstCommentAfter(comments, time)).toBe(linear === -1 ? comments.length : linear);
         }
+    });
+
+});
+
+describe('sortCommentsByOffset', () => {
+
+    it('leaves sorted input alone', () => {
+        const comments = [c(1), c(1), c(2)];
+        expect(sortCommentsByOffset(comments)).toBe(false);
+    });
+
+    it('sorts stably, malformed first', () => {
+        const comments = [
+            { id: 'a', content_offset_seconds: 5 },
+            { id: 'b', content_offset_seconds: 1 },
+            { id: 'c', content_offset_seconds: 5 },
+            { id: 'd', content_offset_seconds: undefined },
+            { id: 'e', content_offset_seconds: 3 },
+        ];
+        expect(sortCommentsByOffset(comments)).toBe(true);
+        expect(comments.map((x) => x.id).join('')).toBe('dbeac');
     });
 
 });
