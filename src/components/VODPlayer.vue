@@ -1335,9 +1335,11 @@ export default defineComponent({
             this.videoPosition = videoTime / this.videoDuration;
 
             /**
-             * If video has ended, pause (stop) the chat playback
+             * If video has ended, pause (stop) the chat playback.
+             * Use the video's own duration: the chat log's length can be shorter than the file
+             * (live captures), and pausing there would make the rest of the video unplayable.
              */
-            if (videoTime >= this.vodLength) {
+            if (videoTime >= (this.videoDuration || this.vodLength)) {
                 this.pause();
                 return false;
             }

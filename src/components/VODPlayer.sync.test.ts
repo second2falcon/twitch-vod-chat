@@ -96,6 +96,17 @@ describe('VODPlayer chat sync', () => {
         }
     }
 
+    it('keeps playing past the chat log length until the video itself ends', async () => {
+        vm.vodLength = 7200; // chat log says 2h, video is longer
+        const pauseSpy = vi.spyOn(vm, 'pause');
+        videoTime = 7320;
+        await vm.tick();
+        expect(pauseSpy).not.toHaveBeenCalled();
+        videoTime = 100000;
+        await vm.tick();
+        expect(pauseSpy).toHaveBeenCalled();
+    });
+
     it('backfills the last N comments on seek and continues without duplicates or gaps', async () => {
         vm.commentLimit = 100000; // keep everything so the full sequence can be checked
         videoTime = 600;
